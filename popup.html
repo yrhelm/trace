@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="pop">
+    <div class="head">
+      <div class="mark"><span></span><span></span><span></span></div>
+      <strong>Trace</strong>
+    </div>
+    <div class="stats" id="stats">
+      <div class="stat"><span class="num" id="sites">&mdash;</span><span class="lab">sites</span></div>
+      <div class="stat"><span class="num" id="orgs">&mdash;</span><span class="lab">watchers</span></div>
+    </div>
+    <p class="topline" id="topline">Loading&hellip;</p>
+    <p class="tagline" id="tagline"></p>
+    <ul class="mini" id="mini"></ul>
+    <div class="gpc-row">
+      <div><div class="gpc-l">Global Privacy Control</div><div class="gpc-s" id="pgpc-status">off</div></div>
+      <button class="switch" id="pgpc" role="switch" aria-checked="false" aria-label="Toggle Global Privacy Control"><span class="knob"></span></button>
+    </div>
+    <button id="open" class="primary">Open full report</button>
+    <button id="clear" class="ghost">Erase all</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

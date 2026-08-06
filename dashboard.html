@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trace &mdash; who followed you</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="masthead">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+        <div><h1>Trace</h1><p class="sub">Exposure report</p></div>
+      </div>
+      <div class="meta">
+        <span class="range" id="range"></span>
+        <span class="tag">On-device &middot; not uploaded</span>
+      </div>
+    </header>
+
+    <section class="summary" id="summary"><!-- scorecard --></section>
+
+    <section class="hero" id="hero"><!-- broadest-follower hub --></section>
+
+    <section class="block" id="graph-block">
+      <h2 class="eyebrow">Across your day</h2>
+      <p class="lede">Your path left to right. Each company that watched you gets a line &mdash; watch it reappear as you moved from site to site.</p>
+      <div class="graph-scroll"><div id="graph"></div></div>
+    </section>
+
+    <section class="block" id="visits-block">
+      <h2 class="eyebrow">Your visits</h2>
+      <p class="lede">Each site you opened &mdash; the origin &mdash; and the companies it told about you the moment you arrived.</p>
+      <div class="howto" id="howto"></div>
+      <ol class="visits" id="visits"></ol>
+    </section>
+
+    <section class="block" id="reid-block">
+      <h2 class="eyebrow">What they figured out</h2>
+      <p class="lede" id="reid-lede"></p>
+      <div class="reid" id="reid"></div>
+    </section>
+
+    <section class="block" id="prevent-block">
+      <h2 class="eyebrow">Stop it at the source</h2>
+      <p class="lede">Deletion is a fight you have to win over and over. Cutting off the collection is the durable move. Two layers, both here.</p>
+      <div class="gpc-control" id="gpc-control"></div>
+      <div class="prevent-grid" id="prevent-cards"></div>
+    </section>
+
+    <section class="block" id="act-block">
+      <h2 class="eyebrow">Take it back</h2>
+      <p class="lede">You can't force deletion from here &mdash; but these are the real levers, strongest first. Trace drafts the request; you send it.</p>
+      <div class="universal" id="universal"></div>
+      <div class="act-list" id="actions"></div>
+    </section>
+
+    <section class="block" id="watchers-block">
+      <h2 class="eyebrow">The watchers</h2>
+      <p class="lede" id="watchers-lede"></p>
+      <ol class="watchers" id="watchers"></ol>
+    </section>
+
+    <footer class="foot">
+      <p>None of this was uploaded. It lives in this browser and nowhere else.</p>
+      <button id="clear" class="ghost">Erase everything</button>
+    </footer>
+  </div>
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>
