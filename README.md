@@ -117,4 +117,4 @@ Everything is local. The extension's engine contains no network code. See
 ## License
 
 [MIT](LICENSE). The bundled tracker data derives from DuckDuckGo Tracker Radar
-(Apache-2.0) — see the LICENSE file for attribution.
+(Apache-2.0) — see [NOTICE](NOTICE) for attribution.

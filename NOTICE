@@ -1,0 +1,29 @@
+Trace — who followed you across the web
+Copyright (c) 2026 yrhelm
+Licensed under the MIT License. See LICENSE.
+
+--------------------------------------------------------------------------------
+THIRD-PARTY DATA
+--------------------------------------------------------------------------------
+
+data/trackers.json
+
+  Generated from DuckDuckGo Tracker Radar
+  https://github.com/duckduckgo/tracker-radar
+  Copyright (c) 2020 DuckDuckGo, Inc.
+  Licensed under the Apache License, Version 2.0
+  http://www.apache.org/licenses/LICENSE-2.0
+
+  This file is a derivative work. tools/build-trackers.mjs reduces Tracker
+  Radar's per-domain records to three fields: owner display name, category
+  bucket, and fingerprinting score. No other Tracker Radar content is
+  redistributed.
+
+  DuckDuckGo is not affiliated with this project and does not endorse it.
+
+--------------------------------------------------------------------------------
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the Apache License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES
+OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.

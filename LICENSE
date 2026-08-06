@@ -19,17 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-THIRD-PARTY DATA
-
-data/trackers.json is generated from DuckDuckGo Tracker Radar
-(https://github.com/duckduckgo/tracker-radar), which is licensed under the
-Apache License, Version 2.0. A copy of that license is available at
-http://www.apache.org/licenses/LICENSE-2.0
-
-The file is a derivative work: tools/build-trackers.mjs reduces Tracker Radar's
-per-domain records to three fields (owner display name, category bucket,
-fingerprinting score). Tracker Radar is not affiliated with this project and
-does not endorse it.
