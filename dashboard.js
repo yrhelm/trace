@@ -27,6 +27,146 @@ function fpBadge(domains) {
     'Tracker Radar likelihood: ' + esc(list) + '">fingerprints</span>';
 }
 
+/* ---------- Time to First Stranger ----------------------------------------
+   For each visit: how long from page open until the first request to a
+   third-party org that isn't infrastructure and that carried a durable ID.
+   Pure reduction over flags and timestamps already in the graph — no new
+   fields, no engine change.
+
+   Three honest limits, all surfaced in the UI:
+   1. edge.ts is first contact with that tracker on that visit; the `id` flag
+      is OR'd across every request in that pairing. So the timestamp can
+      slightly precede the request that actually carried the ID.
+   2. A request firing is exposure, not proof the ID was received and logged.
+   3. Synthetic visits (worker restarted, page-open time unknown — see
+      resolveVisit in background.js) are excluded rather than guessed at.  */
+
+const isSyntheticVisit = (id) => String(id).includes("@synth@");
+
+// Heuristic for criterion (a), "not the first party". The engine already drops
+// same-domain requests, but licdn.com on linkedin.com is still LinkedIn — not a
+// stranger. Compares org name against the site's registrable name; conservative
+// by design (msn.com vs Microsoft stays a stranger).
+const normName = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+function sameParty(org, siteDomain) {
+  const a = normName(org);
+  const b = normName(String(siteDomain).split(".").slice(0, -1).join(""));
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.length >= 4 && b.length >= 4 && (a.includes(b) || b.includes(a));
+}
+
+function qualifies(e, siteDomain) {
+  return !!(e.signals && e.signals.id) &&      // (c) carried a durable ID
+    e.category !== "cdn" &&                    // (b) not known infrastructure
+    !sameParty(e.org, siteDomain);             // (a) not the first party
+}
+
+function computeStrangers(visits, edges) {
+  const byVisit = new Map();
+  for (const e of edges) {
+    if (!byVisit.has(e.visitId)) byVisit.set(e.visitId, []);
+    byVisit.get(e.visitId).push(e);
+  }
+
+  const measured = [];   // visits we could time
+  let skipped = 0;       // synthetic visits, excluded
+  let noStranger = 0;    // measured, but nothing qualified
+
+  for (const v of visits) {
+    if (isSyntheticVisit(v.id)) { skipped++; continue; }
+    const hits = (byVisit.get(v.id) || []).filter((e) => qualifies(e, v.domain));
+    if (!hits.length) { noStranger++; measured.push({ visit: v, seconds: null }); continue; }
+    const first = hits.reduce((a, b) => (b.ts < a.ts ? b : a));
+    measured.push({
+      visit: v,
+      seconds: Math.max(0, (first.ts - v.ts) / 1000),   // clamp: in-flight requests can predate commit
+      org: first.org,
+      trackerDomain: first.trackerDomain
+    });
+  }
+
+  const timed = measured.filter((m) => m.seconds !== null).sort((a, b) => a.seconds - b.seconds);
+  const median = timed.length
+    ? (timed.length % 2 ? timed[(timed.length - 1) / 2].seconds
+      : (timed[timed.length / 2 - 1].seconds + timed[timed.length / 2].seconds) / 2)
+    : null;
+
+  // leaderboard is per site, keeping that site's fastest exposure
+  const bySite = new Map();
+  for (const m of timed) {
+    const prev = bySite.get(m.visit.domain);
+    if (!prev || m.seconds < prev.seconds) bySite.set(m.visit.domain, m);
+  }
+
+  return {
+    measured, timed, median, noStranger, skipped,
+    sites: [...bySite.values()].sort((a, b) => a.seconds - b.seconds)
+  };
+}
+
+const fmtSecs = (s) => (s < 10 ? s.toFixed(1) : Math.round(s).toString()) + "s";
+
+function renderStrangers(st) {
+  const host = document.getElementById("tts");
+  if (!host) return;
+
+  const method =
+    '<details class="tts-method"><summary>How this is measured</summary>' +
+    "<p><b>Time to first ID-bearing request to a third-party org.</b> The clock starts when the " +
+    "page commits and stops at the first request to a company that (1) isn’t the site you " +
+    "opened, (2) isn’t classified as infrastructure/CDN, and (3) carried a durable ID — the " +
+    "<code>id</code> flag from <code>lib/classify.js</code>.</p>" +
+    "<p>A request firing means the ID was <em>sent</em>. It doesn’t confirm the receiving server " +
+    "logged it or tied it to a profile. Treat this as exposure, not proof of collection.</p>" +
+    "<p>The timestamp is first contact with that tracker on that visit, and the ID flag is pooled " +
+    "across every request to it — so the true ID-bearing request can be marginally later than " +
+    "the time shown." +
+    (st.skipped ? " " + st.skipped + " visit" + (st.skipped === 1 ? " was" : "s were") +
+      " left out: the service worker had restarted, so the page-open time wasn’t known." : "") +
+    "</p></details>";
+
+  if (!st.timed.length) {
+    host.innerHTML = '<div class="tts-card"><p class="tts-big none">No stranger yet</p>' +
+      '<p class="tts-sub">Across ' + st.measured.length + " measured visit" + (st.measured.length === 1 ? "" : "s") +
+      ", no third-party company outside infrastructure carried a durable ID.</p>" + method + "</div>";
+    return;
+  }
+
+  const fastest = st.timed[0];
+  const shown = st.sites.slice(0, 10);
+  const rows = shown.map((m, i) =>
+    '<li class="tts-row' + (i === 0 ? " lead" : "") + '">' +
+      '<span class="tts-rank">' + String(i + 1).padStart(2, "0") + "</span>" +
+      '<span class="tts-site">' + esc(m.visit.domain) + "</span>" +
+      '<span class="tts-org" title="' + esc(m.trackerDomain) + '">' + esc(m.org) + "</span>" +
+      '<span class="tts-secs">' + fmtSecs(m.seconds) + "</span>" +
+    "</li>").join("");
+
+  host.innerHTML =
+    '<div class="tts-card">' +
+      '<div class="tts-top">' +
+        '<div class="tts-stat">' +
+          '<p class="tts-big">' + fmtSecs(st.median) + "</p>" +
+          '<p class="tts-lab" title="Median across visits where an ID-bearing third-party request happened at all.">' +
+            "median, across " + st.timed.length + " visit" + (st.timed.length === 1 ? "" : "s") + "</p>" +
+        "</div>" +
+        '<p class="tts-headline">On <b>' + esc(fastest.visit.domain) + "</b>, " +
+          "<b>" + esc(fastest.org) + "</b> had a durable ID on you " +
+          '<span class="tts-hot">' + fmtSecs(fastest.seconds) + "</span> after the page opened.</p>" +
+      "</div>" +
+      '<p class="tts-note">Precisely: time to first ID-bearing request to a third-party org.' +
+        (st.noStranger ? " " + st.noStranger + " of " + st.measured.length +
+          " measured visits never triggered one." : "") + "</p>" +
+      '<ol class="tts-board">' + rows + "</ol>" +
+      (st.sites.length > shown.length
+        ? '<p class="tts-more">' + (st.sites.length - shown.length) + " more site" +
+          (st.sites.length - shown.length === 1 ? "" : "s") + " ranked below these.</p>"
+        : "") +
+      method +
+    "</div>";
+}
+
 function render(visits, edges) {
   visits.sort((a, b) => a.ts - b.ts);
   if (visits.length === 0 || edges.length === 0) {
@@ -53,11 +193,14 @@ function render(visits, edges) {
   document.getElementById("range").textContent =
     fmtDay(first) === fmtDay(last) ? fmtDay(last) : fmtDay(first) + " \u2013 " + fmtDay(last);
 
+  const strangers = computeStrangers(visits, edges);
+
   renderSummary(followers, siteCount, byOrg.size);
   renderHero(followers[0], siteCount, byOrg.size);
   renderGraph(visits, followers);
+  renderStrangers(strangers);
   initChains(followers, edges);
-  renderVisits(visits, edges);
+  renderVisits(visits, edges, strangers);
   renderReid(followers);
   renderPrevention();
   renderActions(followers);
@@ -381,7 +524,10 @@ function renderWatchers(followers, siteCount) {
 }
 
 /* ---------- origin-anchored: each site you opened, and who it told ---------- */
-function renderVisits(visits, edges) {
+function renderVisits(visits, edges, strangers) {
+  // fastest time-to-first-stranger per site, for the per-row readout
+  const ttfs = new Map();
+  if (strangers) for (const m of strangers.sites) ttfs.set(m.visit.domain, m);
   // per origin domain: last time seen, how many times, and which orgs fired
   const meta = new Map(); // domain -> { domain, lastTs, count }
   for (const v of visits) {
@@ -408,10 +554,18 @@ function renderVisits(visits, edges) {
         '. Click to follow its chain.">' + (info.fp ? '<span class="fp-dot"></span>' : "") + esc(org) + "</button>").join("");
     const times = m.count > 1 ? " \u00b7 visited " + m.count + "\u00d7" : "";
     const watchers = orgs.size ? orgs.size + (orgs.size === 1 ? " company" : " companies") : "nothing third-party";
+    const s = ttfs.get(m.domain);
+    const stranger = s
+      ? '<p class="vr-stranger" title="Time to first ID-bearing request to a third-party org. ' +
+        'The request firing means the ID was sent \u2014 not that it was logged server-side.">' +
+        "On <b>" + esc(m.domain) + "</b>, <b>" + esc(s.org) + "</b> had a durable ID on you " +
+        '<span class="vr-secs">' + fmtSecs(s.seconds) + "</span> after the page opened.</p>"
+      : "";
     return '<li class="visit-row">' +
       '<div class="vr-head"><span class="vr-origin">' + esc(m.domain) + "</span>" +
       '<span class="vr-meta">' + watchers + " told" + times + "</span>" +
       '<span class="vr-time">' + fmtTime(m.lastTs) + "</span></div>" +
+      stranger +
       '<div class="vr-orgs">' + (chips || '<span class="org-chip">no third parties fired</span>') + "</div>" +
       "</li>";
   }).join("");
