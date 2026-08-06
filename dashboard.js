@@ -286,15 +286,18 @@ function renderCorrelation(c) {
 // arc diagram: orgs on a baseline, an arc for every pair that shares a page.
 // Arc weight = shared sites, so the thick arcs are the profiles most worth merging.
 function buildArcs(c) {
-  const nodes = c.nodes.slice(0, 9);
+  const nodes = c.nodes.slice(0, 8);
   if (nodes.length < 2) return "";
   const index = new Map(nodes.map((o, i) => [o, i]));
   const arcs = c.pairs.filter((p) => index.has(p.a) && index.has(p.b));
   if (!arcs.length) return "";
 
-  const W = 880, baseline = 150, pad = 60;
-  const step = (W - pad * 2) / Math.max(nodes.length - 1, 1);
-  const xFor = (i) => pad + i * step;
+  // Label geometry is the constraint here, not the arcs. Labels rake down-right
+  // at 45°, so each one eats ~0.7 of its own length horizontally; the right pad
+  // is what keeps the last label inside the viewBox.
+  const W = 880, baseline = 140, padL = 56, padR = 120, MAXLABEL = 15;
+  const step = (W - padL - padR) / Math.max(nodes.length - 1, 1);
+  const xFor = (i) => padL + i * step;
   const maxShared = Math.max(...arcs.map((p) => p.sites.size));
 
   let paths = "";
@@ -312,18 +315,27 @@ function buildArcs(c) {
 
   let dots = "";
   nodes.forEach((org, i) => {
-    const x = xFor(i), sites = c.orgSites.get(org);
+    const x = xFor(i), sites = c.orgSites.get(org), ly = baseline + 15;
+    const label = org.length > MAXLABEL ? org.slice(0, MAXLABEL - 1) + "…" : org;
+    const tip = esc(org) + " — held an ID on you on " + sites.size + (sites.size === 1 ? " site" : " sites");
     dots += '<circle class="arc-node" cx="' + x.toFixed(1) + '" cy="' + baseline + '" r="4.5">' +
-      "<title>" + esc(org) + " — held an ID on you on " + sites.size +
-      (sites.size === 1 ? " site" : " sites") + "</title></circle>" +
-      '<text class="arc-label" x="' + x.toFixed(1) + '" y="' + (baseline + 16) +
-      '" transform="rotate(32 ' + x.toFixed(1) + " " + (baseline + 16) + ')">' +
-      esc(org.length > 18 ? org.slice(0, 17) + "…" : org) + "</text>";
+      "<title>" + tip + "</title></circle>" +
+      '<text class="arc-label" x="' + x.toFixed(1) + '" y="' + ly +
+      '" transform="rotate(45 ' + x.toFixed(1) + " " + ly + ')">' + esc(label) +
+      "<title>" + tip + "</title></text>";
   });
 
+  // no silent caps: say when the picture is a subset of the finding
+  const hidden = c.orgCount - nodes.length;
+  const caption = hidden > 0
+    ? '<p class="arc-cap">Showing the ' + nodes.length + " most connected of " + c.orgCount +
+      " companies holding an ID on you. The " + hidden + " other" + (hidden === 1 ? "" : "s") +
+      " are counted in the pair total above, just not drawn.</p>"
+    : "";
+
   return '<div class="arc-scroll"><svg class="arcs" viewBox="0 0 ' + W + ' 250" preserveAspectRatio="xMidYMin meet">' +
-    '<line class="arc-base" x1="' + pad + '" y1="' + baseline + '" x2="' + (W - pad) + '" y2="' + baseline + '"/>' +
-    paths + dots + "</svg></div>";
+    '<line class="arc-base" x1="' + padL + '" y1="' + baseline + '" x2="' + (W - padR) + '" y2="' + baseline + '"/>' +
+    paths + dots + "</svg></div>" + caption;
 }
 
 function render(visits, edges) {

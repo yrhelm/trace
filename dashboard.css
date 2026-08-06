@@ -325,7 +325,8 @@ button.org-chip:focus-visible, .chain-pick:focus-visible, .chain-btn:focus-visib
 .arc.strong { stroke: var(--red); opacity: 0.5; }
 .arc.strong:hover { opacity: 1; }
 .arc-node { fill: var(--ink); }
-.arc-label { fill: var(--ink-dim); font-family: var(--mono); font-size: 10.5px; text-anchor: start; }
+.arc-label { fill: var(--ink-dim); font-family: var(--mono); font-size: 10.5px; text-anchor: start; cursor: help; }
+.arc-cap { font-size: 11.5px; color: var(--ink-faint); margin: 2px 0 0; line-height: 1.45; }
 @media (prefers-reduced-motion: no-preference) {
   .arc { stroke-dasharray: 900; stroke-dashoffset: 900; animation: draw 1.1s ease forwards; }
 }
