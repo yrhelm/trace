@@ -23,7 +23,7 @@ const FLUSH_DEBOUNCE_MS = 1200;
 const FLUSH_THRESHOLD = 40;
 
 let pendingVisits = [];
-const pendingEdges = new Map();   // key -> { visitId, ts, pageDomain, trackerDomain, org, category, fingerprinting, count, signals }
+const pendingEdges = new Map();   // key -> { visitId, ts, pageDomain, trackerDomain, org, category, fingerprinting, fpScore, count, signals }
 const tabVisits = new Map();      // tabId -> { visitId, domain, ts }
 let flushTimer = null;
 let writeChain = Promise.resolve();
@@ -59,13 +59,14 @@ function flush() {
         // the map is there. Cheap (one hash lookup) and self-healing — it also
         // upgrades edges written before this field existed.
         const c = classify(e.trackerDomain);
-        e.org = c.org; e.category = c.category; e.fingerprinting = c.fingerprinting;
+        e.org = c.org; e.category = c.category; e.fingerprinting = c.fingerprinting; e.fpScore = c.fpScore;
 
         const k = edgeKey(e.visitId, e.trackerDomain);
         if (edges[k]) {
           edges[k].count += e.count;
           edges[k].signals = Object.assign(edges[k].signals || {}, e.signals || {});
-          edges[k].org = e.org; edges[k].category = e.category; edges[k].fingerprinting = e.fingerprinting;
+          edges[k].org = e.org; edges[k].category = e.category;
+          edges[k].fingerprinting = e.fingerprinting; edges[k].fpScore = e.fpScore;
         } else {
           edges[k] = e;
         }
@@ -104,8 +105,8 @@ function upsertEdge(details, trackerDomain, pageDomain, visit, signalSet, incCou
   const k = edgeKey(visit.visitId, trackerDomain);
   let e = pendingEdges.get(k);
   if (!e) {
-    const { org, category, fingerprinting } = classify(trackerDomain);
-    e = { visitId: visit.visitId, ts: details.timeStamp || Date.now(), pageDomain, trackerDomain, org, category, fingerprinting, count: 0, signals: {} };
+    const { org, category, fingerprinting, fpScore } = classify(trackerDomain);
+    e = { visitId: visit.visitId, ts: details.timeStamp || Date.now(), pageDomain, trackerDomain, org, category, fingerprinting, fpScore, count: 0, signals: {} };
     pendingEdges.set(k, e);
   }
   if (incCount) e.count += 1;

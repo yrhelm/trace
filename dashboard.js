@@ -16,12 +16,15 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
 const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
 
 // Fingerprinting flag rides on the edge (set in background.js from Tracker
-// Radar). It means: this tracker is known to run fingerprinting scripts —
-// browser-probing that identifies you with no cookie to clear.
+// Radar, which scores each domain 0-3 on how likely its scripts are probing
+// browser APIs to identify you). We badge 2 and 3 only — see FP_THRESHOLD in
+// lib/domains.js for why. `domains` is Map(trackerDomain -> score).
 function fpBadge(domains) {
   if (!domains || !domains.size) return "";
-  const list = [...domains].sort().join(", ");
-  return '<span class="fp-badge" title="Known fingerprinting scripts, per Tracker Radar: ' + esc(list) + '">fingerprints</span>';
+  const list = [...domains.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([d, score]) => d + " (" + score + "/3)").join(", ");
+  return '<span class="fp-badge" title="Probes your browser for a fingerprint — no cookie to clear. ' +
+    'Tracker Radar likelihood: ' + esc(list) + '">fingerprints</span>';
 }
 
 function render(visits, edges) {
@@ -39,9 +42,9 @@ function render(visits, edges) {
   const byOrg = new Map();
   for (const e of edges) {
     let o = byOrg.get(e.org);
-    if (!o) { o = { org: e.org, sites: new Set(), hits: 0, category: e.category, signals: {}, visitIds: new Set(), fpDomains: new Set() }; byOrg.set(e.org, o); }
+    if (!o) { o = { org: e.org, sites: new Set(), hits: 0, category: e.category, signals: {}, visitIds: new Set(), fpDomains: new Map() }; byOrg.set(e.org, o); }
     o.sites.add(e.pageDomain); o.hits += e.count; o.visitIds.add(e.visitId);
-    if (e.fingerprinting) o.fpDomains.add(e.trackerDomain);
+    if (e.fingerprinting) o.fpDomains.set(e.trackerDomain, e.fpScore || 2);
     if (e.signals) for (const k in e.signals) if (e.signals[k]) o.signals[k] = true;
   }
   const followers = [...byOrg.values()].sort((a, b) => b.sites.size - a.sites.size || b.hits - a.hits);
@@ -205,11 +208,11 @@ function buildChains(edges) {
     let stops = chains.get(e.org);
     if (!stops) { stops = new Map(); chains.set(e.org, stops); }
     let st = stops.get(e.visitId);
-    if (!st) { st = { site: e.pageDomain, ts: e.ts, hits: 0, domains: new Set(), signals: {}, fpDomains: new Set() }; stops.set(e.visitId, st); }
+    if (!st) { st = { site: e.pageDomain, ts: e.ts, hits: 0, domains: new Set(), signals: {}, fpDomains: new Map() }; stops.set(e.visitId, st); }
     st.ts = Math.min(st.ts, e.ts);   // first moment this org saw this page-visit
     st.hits += e.count;
     st.domains.add(e.trackerDomain);
-    if (e.fingerprinting) st.fpDomains.add(e.trackerDomain);
+    if (e.fingerprinting) st.fpDomains.set(e.trackerDomain, e.fpScore || 2);
     if (e.signals) for (const k in e.signals) if (e.signals[k]) st.signals[k] = true;
   }
   const out = new Map();
@@ -254,10 +257,10 @@ function gapLabel(ms) {
 
 function renderChain(org, stops) {
   const sites = new Set(stops.map((s) => s.site));
-  const fpAll = new Set();
+  const fpAll = new Map();
   const sigAll = {};
   for (const s of stops) {
-    for (const d of s.fpDomains) fpAll.add(d);
+    for (const [d, score] of s.fpDomains) fpAll.set(d, Math.max(score, fpAll.get(d) || 0));
     for (const k in s.signals) if (s.signals[k]) sigAll[k] = true;
   }
   const first = stops[0].ts, last = stops[stops.length - 1].ts;

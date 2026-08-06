@@ -1,3 +1,7 @@
 *.zip
 _ziptest/
 node_modules/
+
+# Local checkout used only to rebuild data/trackers.json (~100MB).
+# See tools/build-trackers.mjs.
+tracker-radar/

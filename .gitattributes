@@ -1,0 +1,11 @@
+# Normalize to LF in the repo; check out native. Keeps diffs clean when the
+# same tree is edited from Windows and elsewhere.
+* text=auto eol=lf
+
+# Binary — never touch these.
+*.png binary
+*.zip binary
+
+# Generated from DuckDuckGo Tracker Radar by tools/build-trackers.mjs.
+# One line of minified JSON; a diff of it is noise.
+data/trackers.json -diff linguist-generated
