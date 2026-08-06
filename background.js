@@ -23,7 +23,7 @@ const FLUSH_DEBOUNCE_MS = 1200;
 const FLUSH_THRESHOLD = 40;
 
 let pendingVisits = [];
-const pendingEdges = new Map();   // key -> { visitId, ts, pageDomain, trackerDomain, org, category, count, signals }
+const pendingEdges = new Map();   // key -> { visitId, ts, pageDomain, trackerDomain, org, category, fingerprinting, count, signals }
 const tabVisits = new Map();      // tabId -> { visitId, domain, ts }
 let flushTimer = null;
 let writeChain = Promise.resolve();
@@ -53,10 +53,19 @@ function flush() {
       for (const v of visitsToWrite) visits.push(v);
 
       for (const e of edgesToWrite) {
+        // Re-run attribution at write time. The Radar map loads asynchronously,
+        // so an edge created in the first moments of a cold worker start can
+        // carry a fallback org and a missing fingerprinting bit; by flush time
+        // the map is there. Cheap (one hash lookup) and self-healing — it also
+        // upgrades edges written before this field existed.
+        const c = classify(e.trackerDomain);
+        e.org = c.org; e.category = c.category; e.fingerprinting = c.fingerprinting;
+
         const k = edgeKey(e.visitId, e.trackerDomain);
         if (edges[k]) {
           edges[k].count += e.count;
           edges[k].signals = Object.assign(edges[k].signals || {}, e.signals || {});
+          edges[k].org = e.org; edges[k].category = e.category; edges[k].fingerprinting = e.fingerprinting;
         } else {
           edges[k] = e;
         }
@@ -95,8 +104,8 @@ function upsertEdge(details, trackerDomain, pageDomain, visit, signalSet, incCou
   const k = edgeKey(visit.visitId, trackerDomain);
   let e = pendingEdges.get(k);
   if (!e) {
-    const { org, category } = classify(trackerDomain);
-    e = { visitId: visit.visitId, ts: details.timeStamp || Date.now(), pageDomain, trackerDomain, org, category, count: 0, signals: {} };
+    const { org, category, fingerprinting } = classify(trackerDomain);
+    e = { visitId: visit.visitId, ts: details.timeStamp || Date.now(), pageDomain, trackerDomain, org, category, fingerprinting, count: 0, signals: {} };
     pendingEdges.set(k, e);
   }
   if (incCount) e.count += 1;

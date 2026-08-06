@@ -13,6 +13,16 @@ function load() {
 const fmtTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const fmtDay = (ts) => new Date(ts).toLocaleDateString([], { month: "short", day: "numeric" });
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
+
+// Fingerprinting flag rides on the edge (set in background.js from Tracker
+// Radar). It means: this tracker is known to run fingerprinting scripts —
+// browser-probing that identifies you with no cookie to clear.
+function fpBadge(domains) {
+  if (!domains || !domains.size) return "";
+  const list = [...domains].sort().join(", ");
+  return '<span class="fp-badge" title="Known fingerprinting scripts, per Tracker Radar: ' + esc(list) + '">fingerprints</span>';
+}
 
 function render(visits, edges) {
   visits.sort((a, b) => a.ts - b.ts);
@@ -29,8 +39,9 @@ function render(visits, edges) {
   const byOrg = new Map();
   for (const e of edges) {
     let o = byOrg.get(e.org);
-    if (!o) { o = { org: e.org, sites: new Set(), hits: 0, category: e.category, signals: {}, visitIds: new Set() }; byOrg.set(e.org, o); }
+    if (!o) { o = { org: e.org, sites: new Set(), hits: 0, category: e.category, signals: {}, visitIds: new Set(), fpDomains: new Set() }; byOrg.set(e.org, o); }
     o.sites.add(e.pageDomain); o.hits += e.count; o.visitIds.add(e.visitId);
+    if (e.fingerprinting) o.fpDomains.add(e.trackerDomain);
     if (e.signals) for (const k in e.signals) if (e.signals[k]) o.signals[k] = true;
   }
   const followers = [...byOrg.values()].sort((a, b) => b.sites.size - a.sites.size || b.hits - a.hits);
@@ -42,6 +53,7 @@ function render(visits, edges) {
   renderSummary(followers, siteCount, byOrg.size);
   renderHero(followers[0], siteCount, byOrg.size);
   renderGraph(visits, followers);
+  initChains(followers, edges);
   renderVisits(visits, edges);
   renderReid(followers);
   renderPrevention();
@@ -179,6 +191,121 @@ function renderGraph(visits, followers) {
   document.getElementById("graph").innerHTML = s;
 }
 
+/* ---------- follow one company: the temporal trail for a single org ----------
+   Pure query over the edges we already have — (visitId, ts, pageDomain, org).
+   One "stop" = one page-visit where any of that org's tracker domains fired,
+   timestamped at first contact. No engine changes, no new data stored. */
+let CHAINS = new Map();   // org -> ordered [stop]
+let CHAIN_ORGS = [];      // orgs, ranked as in the watchers list
+let chainOrg = null;
+
+function buildChains(edges) {
+  const chains = new Map();
+  for (const e of edges) {
+    let stops = chains.get(e.org);
+    if (!stops) { stops = new Map(); chains.set(e.org, stops); }
+    let st = stops.get(e.visitId);
+    if (!st) { st = { site: e.pageDomain, ts: e.ts, hits: 0, domains: new Set(), signals: {}, fpDomains: new Set() }; stops.set(e.visitId, st); }
+    st.ts = Math.min(st.ts, e.ts);   // first moment this org saw this page-visit
+    st.hits += e.count;
+    st.domains.add(e.trackerDomain);
+    if (e.fingerprinting) st.fpDomains.add(e.trackerDomain);
+    if (e.signals) for (const k in e.signals) if (e.signals[k]) st.signals[k] = true;
+  }
+  const out = new Map();
+  for (const [org, stops] of chains) out.set(org, [...stops.values()].sort((a, b) => a.ts - b.ts));
+  return out;
+}
+
+function initChains(followers, edges) {
+  CHAINS = buildChains(edges);
+  CHAIN_ORGS = followers.map((f) => f.org).filter((o) => CHAINS.has(o));
+  if (!CHAIN_ORGS.length) { document.getElementById("chain-block").hidden = true; return; }
+  showChain(chainOrg && CHAINS.has(chainOrg) ? chainOrg : CHAIN_ORGS[0], false);
+}
+
+// selects an org and repaints the picker + trail; scrolls into view when the
+// click came from elsewhere on the page.
+function showChain(org, scroll) {
+  if (!CHAINS.has(org)) return;
+  chainOrg = org;
+
+  document.getElementById("chain-picker").innerHTML = CHAIN_ORGS.map((o) => {
+    const stops = CHAINS.get(o);
+    return '<button type="button" class="chain-pick' + (o === org ? " on" : "") + '" data-chain-org="' + esc(o) + '"' +
+      (o === org ? ' aria-current="true"' : "") + ">" + esc(o) +
+      '<span class="cp-n">' + stops.length + "</span></button>";
+  }).join("");
+
+  renderChain(org, CHAINS.get(org));
+  if (scroll) document.getElementById("chain-block").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function gapLabel(ms) {
+  const sec = Math.round(ms / 1000);
+  if (sec < 45) return sec <= 2 ? "moments later" : sec + " sec later";
+  const min = Math.round(sec / 60);
+  if (min < 60) return min + " min later";
+  const hr = Math.floor(min / 60), rem = min % 60;
+  if (hr < 24) return hr + "h" + (rem ? " " + rem + "m" : "") + " later";
+  const day = Math.round(hr / 24);
+  return day + (day === 1 ? " day later" : " days later");
+}
+
+function renderChain(org, stops) {
+  const sites = new Set(stops.map((s) => s.site));
+  const fpAll = new Set();
+  const sigAll = {};
+  for (const s of stops) {
+    for (const d of s.fpDomains) fpAll.add(d);
+    for (const k in s.signals) if (s.signals[k]) sigAll[k] = true;
+  }
+  const first = stops[0].ts, last = stops[stops.length - 1].ts;
+  const span = fmtTime(first) + (stops.length > 1 ? " → " + fmtTime(last) : "");
+
+  // the plain-English version of the trail, in the user's own words
+  const recap = stops.slice(0, 3).map((s) => esc(s.site) + " at " + fmtTime(s.ts)).join(", ");
+  const more = stops.length > 3 ? ", and " + (stops.length - 3) + " more" : "";
+
+  const order = ["id", "geo", "ua", "screen", "tz", "lang", "page", "referrer", "consent"];
+  const sigs = order.filter((k) => sigAll[k]).map((k) => {
+    const cls = k === "id" ? "id" : (SIGNAL_META[k].kind === "identity" ? "identity" : "");
+    return '<span class="sig-chip ' + cls + '">' + SIGNAL_META[k].label + "</span>";
+  }).join("");
+
+  let rows = "";
+  stops.forEach((s, i) => {
+    const prev = i ? stops[i - 1] : null;
+    const gap = prev ? '<li class="gap"><span class="gap-tx">' + gapLabel(s.ts - prev.ts) + "</span></li>" : "";
+    const dayMark = !prev || !sameDay(prev.ts, s.ts) ? '<span class="st-day">' + fmtDay(s.ts) + "</span>" : "";
+    const via = [...s.domains].sort().join(", ");
+    rows += gap +
+      '<li class="stop' + (i === 0 ? " first" : "") + (i === stops.length - 1 ? " last" : "") + '">' +
+        '<span class="st-when"><span class="st-time">' + fmtTime(s.ts) + "</span>" + dayMark + "</span>" +
+        '<span class="st-rail"><span class="st-dot' + (s.fpDomains.size ? " fp" : "") + '"></span></span>' +
+        '<span class="st-body">' +
+          '<span class="st-site">' + esc(s.site) + "</span>" +
+          '<span class="st-meta">' + s.hits + (s.hits === 1 ? " request" : " requests") +
+            ' · via <span class="st-via">' + esc(via) + "</span></span>" +
+        "</span>" +
+      "</li>";
+  });
+
+  document.getElementById("chain").innerHTML =
+    '<div class="chain-card">' +
+      '<div class="chain-head">' +
+        '<div><span class="ch-org">' + esc(org) + "</span>" + fpBadge(fpAll) + "</div>" +
+        '<span class="ch-span mono">' + span + "</span>" +
+      "</div>" +
+      '<p class="chain-recap">' + esc(org) + " saw you on " + recap + more + ".</p>" +
+      '<p class="chain-stat">' + stops.length + (stops.length === 1 ? " stop" : " stops") +
+        " across " + sites.size + (sites.size === 1 ? " site" : " sites") +
+        (stops.length > 1 ? " · " + gapLabel(last - first).replace(/ later$/, " end to end") : "") + "</p>" +
+      (sigs ? '<div class="chain-sigs">' + sigs + "</div>" : "") +
+      '<ol class="trail">' + rows + "</ol>" +
+    "</div>";
+}
+
 /* ---------- re-id: what they figured out ---------- */
 function renderReid(followers) {
   const tagged = followers.filter((f) => f.signals.id);
@@ -239,7 +366,9 @@ function renderWatchers(followers, siteCount) {
     return '<li><details class="watcher' + worst + '"' + (i === 0 ? " open" : "") + ">" +
       "<summary>" +
       '<span class="rank">' + String(i + 1).padStart(2, "0") + "</span>" +
-      '<span><span class="w-name">' + esc(f.org) + '</span><span class="w-cat">' + (CATS[f.category] || f.category) + "</span></span>" +
+      '<span><span class="w-name">' + esc(f.org) + '</span><span class="w-cat">' + (CATS[f.category] || f.category) + "</span>" +
+      fpBadge(f.fpDomains) + "</span>" +
+      '<button type="button" class="chain-btn" data-chain-org="' + esc(f.org) + '">follow chain</button>' +
       '<span class="w-count">' + f.sites.size + '<span class="of"> / ' + siteCount + " sites</span></span>" +
       "</summary>" +
       (sigs ? '<div class="w-signals">' + sigs + "</div>" : "") +
@@ -258,17 +387,22 @@ function renderVisits(visits, edges) {
     m.count += 1;
     meta.set(v.domain, m);
   }
-  const orgsByOrigin = new Map(); // domain -> Map(org -> category)
+  const orgsByOrigin = new Map(); // domain -> Map(org -> { cat, fp })
   for (const e of edges) {
     if (!orgsByOrigin.has(e.pageDomain)) orgsByOrigin.set(e.pageDomain, new Map());
-    orgsByOrigin.get(e.pageDomain).set(e.org, e.category);
+    const at = orgsByOrigin.get(e.pageDomain);
+    const cur = at.get(e.org) || { cat: e.category, fp: false };
+    if (e.fingerprinting) cur.fp = true;
+    at.set(e.org, cur);
   }
 
   const rows = [...meta.values()].sort((a, b) => b.lastTs - a.lastTs);
   document.getElementById("visits").innerHTML = rows.map((m) => {
     const orgs = orgsByOrigin.get(m.domain) || new Map();
     const chips = [...orgs.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([org, cat]) => '<span class="org-chip ' + cat + '">' + esc(org) + "</span>").join("");
+      .map(([org, info]) => '<button type="button" class="org-chip ' + info.cat + (info.fp ? " fp" : "") +
+        '" data-chain-org="' + esc(org) + '" title="' + esc(org) + (info.fp ? " — runs fingerprinting scripts" : "") +
+        '. Click to follow its chain.">' + (info.fp ? '<span class="fp-dot"></span>' : "") + esc(org) + "</button>").join("");
     const times = m.count > 1 ? " \u00b7 visited " + m.count + "\u00d7" : "";
     const watchers = orgs.size ? orgs.size + (orgs.size === 1 ? " company" : " companies") : "nothing third-party";
     return '<li class="visit-row">' +
@@ -295,7 +429,7 @@ function renderHowTo(example) {
   if (!example || example.orgs.length === 0) { host.innerHTML = ""; return; }
 
   const domain = example.domain;
-  const cos = example.orgs.slice(0, 3).map(([org, cat]) => ({ org, cat }));
+  const cos = example.orgs.slice(0, 3).map(([org, info]) => ({ org, cat: info.cat }));
   const n = cos.length;
   const catColor = { ad: "var(--amber)", analytics: "var(--peri)", social: "var(--violet)", cdn: "var(--muted)", other: "var(--ink-dim)" };
 
@@ -463,6 +597,14 @@ function renderActions(followers) {
 
 // one delegated listener for the whole action list
 document.addEventListener("click", (e) => {
+  // follow-chain selection: picker chips, watcher rows, per-visit org chips
+  const pick = e.target.closest("[data-chain-org]");
+  if (pick) {
+    e.preventDefault();      // these live inside <summary>; don't toggle the row
+    e.stopPropagation();
+    showChain(pick.getAttribute("data-chain-org"), !pick.closest("#chain-picker"));
+    return;
+  }
   const gpc = e.target.closest("#gpc-switch");
   if (gpc) {
     const turningOn = !gpc.classList.contains("on");
