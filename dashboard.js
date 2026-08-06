@@ -167,6 +167,165 @@ function renderStrangers(st) {
     "</div>";
 }
 
+/* ---------- Who can compare notes -----------------------------------------
+   The report so far counts watchers one at a time. That undersells it: your
+   profile isn't 47 separate slivers. Any two companies that each held a
+   durable ID on you on the SAME page are one handshake away from merging what
+   they saw — that's the technical precondition for profile stitching.
+
+   Same qualifying test as Time to First Stranger (durable ID, not
+   infrastructure, not the first party), so the two sections agree on who
+   counts. Co-occurrence is opportunity, NOT evidence of a transaction — said
+   plainly in the UI, because the honest version is damning enough.  */
+
+function computeCorrelation(visits, edges) {
+  const edgesByVisit = new Map();
+  for (const e of edges) {
+    if (!edgesByVisit.has(e.visitId)) edgesByVisit.set(e.visitId, []);
+    edgesByVisit.get(e.visitId).push(e);
+  }
+
+  const pairs = new Map();          // "a␟b" -> { a, b, sites:Set, visits:number }
+  const orgSites = new Map();       // org -> Set(site) where it held an ID
+  let widest = null;                // the single visit with the most ID-holders
+
+  for (const v of visits) {
+    const here = new Set();
+    for (const e of edgesByVisit.get(v.id) || []) if (qualifies(e, v.domain)) here.add(e.org);
+    if (!here.size) continue;
+
+    for (const org of here) {
+      if (!orgSites.has(org)) orgSites.set(org, new Set());
+      orgSites.get(org).add(v.domain);
+    }
+    if (!widest || here.size > widest.orgs.length) widest = { site: v.domain, ts: v.ts, orgs: [...here] };
+
+    const list = [...here].sort();
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const k = list[i] + "␟" + list[j];
+        let p = pairs.get(k);
+        if (!p) { p = { a: list[i], b: list[j], sites: new Set(), visits: 0 }; pairs.set(k, p); }
+        p.sites.add(v.domain);
+        p.visits += 1;
+      }
+    }
+  }
+
+  const ranked = [...pairs.values()]
+    .sort((x, y) => y.sites.size - x.sites.size || y.visits - x.visits ||
+      x.a.localeCompare(x.b) || x.a.localeCompare(y.a));
+
+  // nodes for the arc diagram: the orgs with the most reach, most-connected first
+  const degree = new Map();
+  for (const p of ranked) {
+    degree.set(p.a, (degree.get(p.a) || 0) + p.sites.size);
+    degree.set(p.b, (degree.get(p.b) || 0) + p.sites.size);
+  }
+  const nodes = [...degree.entries()].sort((x, y) => y[1] - x[1]).map(([org]) => org);
+
+  return { pairs: ranked, nodes, orgSites, widest, orgCount: orgSites.size };
+}
+
+function renderCorrelation(c) {
+  const host = document.getElementById("stitch");
+  if (!host) return;
+
+  const method =
+    '<details class="tts-method"><summary>What this does and doesn’t show</summary>' +
+    "<p><b>Two companies appear together here when each one held a durable ID on you on the " +
+    "same page.</b> Same test as the metric above: an <code>id</code> flag, not classified as " +
+    "infrastructure, not the site you opened.</p>" +
+    "<p><b>This is opportunity, not proof.</b> Co-occurrence means merging their two views of " +
+    "you is technically possible — it is the precondition for stitching, and the thing the " +
+    "ad-tech industry calls identity resolution. It is <em>not</em> evidence that these two " +
+    "companies exchanged anything. Real syncing happens server-to-server, where no browser " +
+    "extension can see it.</p>" +
+    "<p>Trace shows you the doorway, not what walked through it.</p></details>";
+
+  if (!c.pairs.length) {
+    host.innerHTML = '<div class="tts-card"><p class="tts-big none">No overlap yet</p>' +
+      '<p class="tts-sub">No two companies held a durable ID on you on the same page. That gets ' +
+      "rarer the longer you browse.</p>" + method + "</div>";
+    return;
+  }
+
+  const top = c.pairs[0];
+  const shown = c.pairs.slice(0, 8);
+  const rows = shown.map((p, i) =>
+    '<li class="st-pair' + (i === 0 ? " lead" : "") + '">' +
+      '<span class="sp-names"><b>' + esc(p.a) + "</b> <span class=\"sp-amp\">&amp;</span> <b>" + esc(p.b) + "</b></span>" +
+      '<span class="sp-sites" title="' + esc([...p.sites].sort().join(", ")) + '">' +
+        p.sites.size + (p.sites.size === 1 ? " shared site" : " shared sites") + "</span>" +
+    "</li>").join("");
+
+  host.innerHTML =
+    '<div class="tts-card">' +
+      '<div class="tts-top">' +
+        '<div class="tts-stat"><p class="tts-big">' + c.pairs.length + "</p>" +
+          '<p class="tts-lab" title="Unordered pairs of companies that each held a durable ID on you on at least one shared page.">' +
+          "pairs able to compare notes</p></div>" +
+        '<p class="tts-headline"><b>' + esc(top.a) + "</b> and <b>" + esc(top.b) + "</b> both held an ID " +
+          "on you across <span class=\"tts-hot\">" + top.sites.size +
+          (top.sites.size === 1 ? " site" : " sites") + "</span>. Between them, that’s one profile — not two.</p>" +
+      "</div>" +
+      (c.widest && c.widest.orgs.length > 1
+        ? '<p class="tts-note">Densest single page: <b>' + esc(c.widest.site) + "</b> — " +
+          c.widest.orgs.length + " companies each holding an ID on you at the same moment.</p>"
+        : "") +
+      buildArcs(c) +
+      '<ol class="st-pairs">' + rows + "</ol>" +
+      (c.pairs.length > shown.length
+        ? '<p class="tts-more">' + (c.pairs.length - shown.length) + " further pair" +
+          (c.pairs.length - shown.length === 1 ? "" : "s") + " not shown.</p>"
+        : "") +
+      method +
+    "</div>";
+}
+
+// arc diagram: orgs on a baseline, an arc for every pair that shares a page.
+// Arc weight = shared sites, so the thick arcs are the profiles most worth merging.
+function buildArcs(c) {
+  const nodes = c.nodes.slice(0, 9);
+  if (nodes.length < 2) return "";
+  const index = new Map(nodes.map((o, i) => [o, i]));
+  const arcs = c.pairs.filter((p) => index.has(p.a) && index.has(p.b));
+  if (!arcs.length) return "";
+
+  const W = 880, baseline = 150, pad = 60;
+  const step = (W - pad * 2) / Math.max(nodes.length - 1, 1);
+  const xFor = (i) => pad + i * step;
+  const maxShared = Math.max(...arcs.map((p) => p.sites.size));
+
+  let paths = "";
+  for (const p of arcs) {
+    const i = index.get(p.a), j = index.get(p.b);
+    const x1 = xFor(Math.min(i, j)), x2 = xFor(Math.max(i, j));
+    const lift = Math.min(120, (x2 - x1) * 0.55 + 14);
+    const strong = p.sites.size === maxShared;
+    paths += '<path class="arc' + (strong ? " strong" : "") + '" d="M' + x1.toFixed(1) + " " + baseline +
+      " Q " + ((x1 + x2) / 2).toFixed(1) + " " + (baseline - lift).toFixed(1) + " " + x2.toFixed(1) + " " + baseline +
+      '" style="stroke-width:' + (0.8 + (p.sites.size / maxShared) * 2.6).toFixed(2) + '">' +
+      "<title>" + esc(p.a) + " & " + esc(p.b) + " — both held an ID on you on " + p.sites.size +
+      (p.sites.size === 1 ? " site" : " sites") + ": " + esc([...p.sites].sort().join(", ")) + "</title></path>";
+  }
+
+  let dots = "";
+  nodes.forEach((org, i) => {
+    const x = xFor(i), sites = c.orgSites.get(org);
+    dots += '<circle class="arc-node" cx="' + x.toFixed(1) + '" cy="' + baseline + '" r="4.5">' +
+      "<title>" + esc(org) + " — held an ID on you on " + sites.size +
+      (sites.size === 1 ? " site" : " sites") + "</title></circle>" +
+      '<text class="arc-label" x="' + x.toFixed(1) + '" y="' + (baseline + 16) +
+      '" transform="rotate(32 ' + x.toFixed(1) + " " + (baseline + 16) + ')">' +
+      esc(org.length > 18 ? org.slice(0, 17) + "…" : org) + "</text>";
+  });
+
+  return '<div class="arc-scroll"><svg class="arcs" viewBox="0 0 ' + W + ' 250" preserveAspectRatio="xMidYMin meet">' +
+    '<line class="arc-base" x1="' + pad + '" y1="' + baseline + '" x2="' + (W - pad) + '" y2="' + baseline + '"/>' +
+    paths + dots + "</svg></div>";
+}
+
 function render(visits, edges) {
   visits.sort((a, b) => a.ts - b.ts);
   if (visits.length === 0 || edges.length === 0) {
@@ -199,6 +358,7 @@ function render(visits, edges) {
   renderHero(followers[0], siteCount, byOrg.size);
   renderGraph(visits, followers);
   renderStrangers(strangers);
+  renderCorrelation(computeCorrelation(visits, edges));
   initChains(followers, edges);
   renderVisits(visits, edges, strangers);
   renderReid(followers);
