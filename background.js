@@ -13,7 +13,8 @@
 // level so they re-attach on wake; we flush eagerly so a worker death costs at
 // most ~1s of buffered events.
 
-import { getDomain, hostnameFromUrl, classify } from "./lib/domains.js";
+import { getDomain, hostnameFromUrl, classify, loadTrackerData } from "./lib/domains.js";
+loadTrackerData();
 import { signalsFromUrl, signalsFromHeaders, signalsFromBody, mergeSignals } from "./lib/classify.js";
 
 const VISIT_CAP = 800;
